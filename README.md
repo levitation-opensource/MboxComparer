@@ -23,11 +23,13 @@ Default normalisation mode: `boundary_relaxed`
 
 ## Usage
 
-  python compare_mbox.py A.mbox B.mbox
-  python compare_mbox.py A.mbox B.mbox --mode strict
-  python compare_mbox.py A.mbox B.mbox --mode relaxed
-  python compare_mbox.py A.mbox B.mbox --max-mismatches 20
-  python compare_mbox.py A.mbox B.mbox --compare-corrupt-message-dates
+```
+python mbox_comparer.py A.mbox B.mbox
+python mbox_comparer.py A.mbox B.mbox --mode strict
+python mbox_comparer.py A.mbox B.mbox --mode relaxed
+python mbox_comparer.py A.mbox B.mbox --max-mismatches 20
+python mbox_comparer.py A.mbox B.mbox --compare-corrupt-message-dates
+```
 
 
 ## Current project state
