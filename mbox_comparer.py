@@ -571,7 +571,7 @@ def main() -> None:
         "--compare-corrupt-message-dates",
         action="store_true",
         default=False,
-        help="Compares dates of corrupt messages (default: off). Default is off because these messages contain download date, not send date.",
+        help="Compares dates of corrupt messages (default: off). Default is off because Date header field of these messages contains download date, not send date.",
     )
 
     args = ap.parse_args()

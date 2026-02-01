@@ -1,4 +1,6 @@
-# Streaming mbox-to-mbox comparator
+# Mbox file comparer with efficient memory usage
+
+Mbox-to-mbox comparator for data integrity verification. It compares full content of emails (headers and body) after canonicalisation, and optionally tolerates differences in the lengths of blank-line runs. It assumes messages are in the same order and uses streaming to reduce memory usage.
 
 - Compares message-by-message in order (streaming - does not load whole mbox into memory).
 - Ignores the mbox "From " separator line (download date etc).
@@ -19,6 +21,10 @@ Default normalisation mode: `boundary_relaxed`
 
 **Notes:**
 - Line endings are always canonicalised (CRLF/CR -> LF).
+
+**Other parameters:**
+- `--max-mismatches [number]` - Stop after this many mismatches (default: 1).
+- `--compare-corrupt-message-dates` - Compares dates of corrupt messages (default: off). Default is off because Date header field of these messages contains download date, not send date.
 
 
 ## Usage
