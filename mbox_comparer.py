@@ -5,7 +5,7 @@
 #
 # roland@simplify.ee
 #
-# Version 1.0.1
+# Version 1.1.0
 # 
 # Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
 # See the LICENSE.txt file for more information.
@@ -37,6 +37,7 @@ Usage:
   python mbox_comparer.py A.mbox B.mbox --mode relaxed
   python mbox_comparer.py A.mbox B.mbox --max-mismatches 20
   python mbox_comparer.py A.mbox B.mbox --compare-corrupt-message-dates
+  python mbox_comparer.py A.mbox B.mbox --hash-only-comparison
 """
 
 from __future__ import annotations
@@ -95,7 +96,7 @@ class MessageInfo:
     mbox_from_separator: str
     message_id: Optional[str]
     boundary: Optional[bytes]
-    hashed_message: Optional[bytes]
+    canonicalised_message: Optional[bytes]
     byteoffset: int   # TODO: Return exact byteoffset without buffering and print that offset in case mismatches are detected
 
 
@@ -150,7 +151,7 @@ class MboxStreamReader:
         )
         return result
 
-    def next_message(self, hashed_message_separator: bytes = b"") -> Optional[MessageInfo]:
+    def next_message(self, canonicalised_message_parts_separator: Optional[bytes] = None) -> Optional[MessageInfo]:
 
         mbox_from_separator = self._read_until_next_separator()
         if mbox_from_separator is None:
@@ -159,7 +160,7 @@ class MboxStreamReader:
         self._msg_index += 1
         idx = self._msg_index
 
-        hashed_message = b''
+        canonicalised_message_parts = [] if canonicalised_message_parts_separator is not None else None
         h = hashlib.sha256()
         size = 0
 
@@ -213,8 +214,8 @@ class MboxStreamReader:
             if is_corrupt_message and header_line.strip().lower().startswith(b"date:"):
                 continue
             line_out = add_lf(header_line)
-            if hashed_message is not None:
-                hashed_message += hashed_message_separator + line_out
+            if canonicalised_message_parts is not None:
+                canonicalised_message_parts.append(line_out)
             h.update(line_out)
             size += len(line_out)
 
@@ -230,7 +231,7 @@ class MboxStreamReader:
                 mbox_from_separator=mbox_from_separator.strip(),
                 message_id=message_id,
                 boundary=boundary,
-                hashed_message=hashed_message,
+                canonicalised_message=canonicalised_message_parts_separator.join(canonicalised_message_parts) if canonicalised_message_parts_separator is not None else None,
                 byteoffset=self.f.tell(),
             )
 
@@ -249,19 +250,19 @@ class MboxStreamReader:
 
 
         def flush_blanks(force_collapse_to_one: bool) -> None:
-            nonlocal num_pending_blanks, size, at_body_start, hashed_message
+            nonlocal num_pending_blanks, size, at_body_start, canonicalised_message_parts
             if num_pending_blanks <= 0:
                 return
             if force_collapse_to_one:
                 line_out = b"\n"
-                if hashed_message is not None:
-                    hashed_message += hashed_message_separator + line_out
+                if canonicalised_message_parts is not None:
+                    canonicalised_message_parts.append(line_out)
                 h.update(line_out)
                 size += 1
             else:
                 line_out = b"\n" * num_pending_blanks
-                if hashed_message is not None:
-                    hashed_message += hashed_message_separator + line_out
+                if canonicalised_message_parts is not None:
+                    canonicalised_message_parts.append(line_out)
                 h.update(line_out)
                 size += num_pending_blanks
             num_pending_blanks = 0
@@ -313,8 +314,8 @@ class MboxStreamReader:
 
             if self.mode == "strict":
                 line_out = add_lf(line_without_eol)
-                if hashed_message is not None:
-                    hashed_message += hashed_message_separator + line_out
+                if canonicalised_message_parts is not None:
+                    canonicalised_message_parts.append(line_out)
                 h.update(line_out)
                 size += len(line_out)
                 continue
@@ -354,8 +355,8 @@ class MboxStreamReader:
                 if num_pending_blanks > 0:
                     num_pending_blanks = 0  # Ignore blanks before boundary
                 line_out = add_lf(line_without_eol)
-                if hashed_message is not None:
-                    hashed_message += hashed_message_separator + line_out
+                if canonicalised_message_parts is not None:
+                    canonicalised_message_parts.append(line_out)
                 h.update(line_out)
                 size += len(line_out)
                 prev_was_boundary = True
@@ -383,8 +384,8 @@ class MboxStreamReader:
                 line_out = line_without_eol  # Ignore newlines inside base64 encoded part
             else:
                 line_out = add_lf(line_without_eol)
-            if hashed_message is not None:
-                hashed_message += hashed_message_separator + line_out
+            if canonicalised_message_parts is not None:
+                canonicalised_message_parts.append(line_out)
             h.update(line_out)
             size += len(line_out)
             at_body_start = False
@@ -407,16 +408,16 @@ class MboxStreamReader:
             mbox_from_separator=mbox_from_separator.strip(),
             message_id=message_id,
             boundary=boundary,
-            hashed_message=hashed_message,
+            canonicalised_message=canonicalised_message_parts_separator.join(canonicalised_message_parts) if canonicalised_message_parts_separator is not None else None,
             byteoffset=self.f.tell(),
         )
 
-    #/ def next_message(self, hashed_message_separator: bytes = b"") -> Optional[MessageInfo]:
+    #/ def next_message(self, canonicalised_message_parts_separator: bytes = b"") -> Optional[MessageInfo]:
 
 #/ class MboxStreamReader:
 
 
-def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, compare_corrupt_message_dates: bool) -> int:
+def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, compare_corrupt_message_dates: bool, hash_only_comparison: bool) -> int:
 
     ra = MboxStreamReader(path_a, mode, compare_corrupt_message_dates)
     rb = MboxStreamReader(path_b, mode, compare_corrupt_message_dates)
@@ -440,8 +441,8 @@ def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, com
         with ProgressBar(max_value=totalsize, granularity=1000 * 1000) as bar:
             while True:                
                 try:
-                    ma = ra.next_message(hashed_message_separator=b"")
-                    mb = rb.next_message(hashed_message_separator=b"")
+                    ma = ra.next_message(canonicalised_message_parts_separator=None if hash_only_comparison else b"")
+                    mb = rb.next_message(canonicalised_message_parts_separator=None if hash_only_comparison else b"")
 
                     if ma is None and mb is None:
                         break
@@ -473,7 +474,7 @@ def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, com
 
                     compared += 1
 
-                    if ma.sha256_hex != mb.sha256_hex:
+                    if ma.sha256_hex != mb.sha256_hex or (not hash_only_comparison and ma.canonicalised_message != mb.canonicalised_message):
                         mismatches += 1
 
                         if ma.message_id:
@@ -574,9 +575,16 @@ def main() -> None:
         help="Compares dates of corrupt messages (default: off). Default is off because Date header field of these messages contains download date, not send date.",
     )
 
+    ap.add_argument(
+        "--hash-only-comparison",
+        action="store_true",
+        default=False,
+        help="Compares messages only via hashes to provide minor speed boost (default: off). Default is off (i.e comparison of canonicalised messages byte by byte is on) because that avoids the theoretical risk of hash collisions at a minor speed cost (about 5%).",
+    )
+
     args = ap.parse_args()
 
-    compare_mboxes(args.mbox_a, args.mbox_b, args.mode, args.max_mismatches, args.compare_corrupt_message_dates)
+    compare_mboxes(args.mbox_a, args.mbox_b, args.mode, args.max_mismatches, args.compare_corrupt_message_dates, args.hash_only_comparison)
 
     quit()
 
