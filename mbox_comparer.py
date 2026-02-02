@@ -5,7 +5,7 @@
 #
 # roland@simplify.ee
 #
-# Version 1.0.0
+# Version 1.0.1
 # 
 # Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
 # See the LICENSE.txt file for more information.
@@ -140,7 +140,7 @@ class MboxStreamReader:
         def try_get(name):
             try:
                 return msg.get(name)
-            except (IndexError, ValueError):   # handle "IndexError: list index out of range" and "ValueError: invalid arguments; address parts cannot contain CR or LF"
+            except (IndexError, ValueError, AttributeError):   # handle "IndexError: list index out of range" and "ValueError: invalid arguments; address parts cannot contain CR or LF" and "AttributeError: 'str' object has no attribute 'token_type'"
                 return ""  # TODO: is there a better way?
 
         result = (
