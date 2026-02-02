@@ -25,6 +25,7 @@ Default normalisation mode: `boundary_relaxed`
 **Other parameters:**
 - `--max-mismatches [number]` - Stop after this many mismatches (default: 1).
 - `--compare-corrupt-message-dates` - Compares dates of corrupt messages (default: off). Default is off because Date header field of these messages contains download date, not send date.
+- `--hash-only-comparison` - Compares messages only via hashes to provide minor speed boost (default: off). Default is off (i.e comparison of canonicalised messages byte by byte is on) because that avoids the theoretical risk of hash collisions at a minor speed cost (about 5%).
 
 
 ## Usage
