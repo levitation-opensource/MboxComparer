@@ -5,7 +5,7 @@
 #
 # roland@simplify.ee
 #
-# Version 1.1.0
+# Version 1.1.1
 # 
 # Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
 # See the LICENSE.txt file for more information.
@@ -190,7 +190,10 @@ class MboxStreamReader:
         parser = BytesHeaderParser(policy=default_policy)
         msg = parser.parsebytes(raw_header_block)
 
-        message_id = msg.get("Message-ID")
+        try:
+            message_id = msg.get("Message-ID")
+        except IndexError:		# IndexError: list index out of range
+            message_id = None
         if message_id is not None:
             message_id = str(message_id).strip()
 
