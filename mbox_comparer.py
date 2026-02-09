@@ -5,7 +5,7 @@
 #
 # roland@simplify.ee
 #
-# Version 1.1.1
+# Version 1.2.1
 # 
 # Roland Pihlakas licenses this file to you under the GNU Lesser General Public License, ver 2.1.
 # See the LICENSE.txt file for more information.
@@ -38,6 +38,8 @@ Usage:
   python mbox_comparer.py A.mbox B.mbox --max-mismatches 20
   python mbox_comparer.py A.mbox B.mbox --compare-corrupt-message-dates
   python mbox_comparer.py A.mbox B.mbox --hash-only-comparison
+  python mbox_comparer.py A.mbox B.mbox --order-tolerant-comparison --hash-only-comparison
+  python mbox_comparer.py A.mbox B.mbox --order-tolerant-comparison
 """
 
 from __future__ import annotations
@@ -48,7 +50,7 @@ import hashlib
 import re
 import traceback
 from dataclasses import dataclass
-from typing import BinaryIO, Optional, Tuple, Dict
+from typing import BinaryIO, Optional, Tuple, Dict, List
 
 from email.parser import BytesHeaderParser
 from email.policy import default as default_policy
@@ -93,7 +95,7 @@ class MessageInfo:
     index: int
     sha256_hex: str
     size_canonical_bytes: int
-    mbox_from_separator: str
+    mbox_from_separator: bytes
     message_id: Optional[str]
     boundary: Optional[bytes]
     canonicalised_message: Optional[bytes]
@@ -160,7 +162,7 @@ class MboxStreamReader:
         self._msg_index += 1
         idx = self._msg_index
 
-        canonicalised_message_parts = [] if canonicalised_message_parts_separator is not None else None
+        canonicalised_message_parts = [] if canonicalised_message_parts_separator is not None else None   # type: Optional[List[bytes]]
         h = hashlib.sha256()
         size = 0
 
@@ -234,7 +236,7 @@ class MboxStreamReader:
                 mbox_from_separator=mbox_from_separator.strip(),
                 message_id=message_id,
                 boundary=boundary,
-                canonicalised_message=canonicalised_message_parts_separator.join(canonicalised_message_parts) if canonicalised_message_parts_separator is not None else None,
+                canonicalised_message=canonicalised_message_parts_separator.join(canonicalised_message_parts) if (canonicalised_message_parts_separator is not None and canonicalised_message_parts is not None) else None,
                 byteoffset=self.f.tell(),
             )
 
@@ -411,7 +413,7 @@ class MboxStreamReader:
             mbox_from_separator=mbox_from_separator.strip(),
             message_id=message_id,
             boundary=boundary,
-            canonicalised_message=canonicalised_message_parts_separator.join(canonicalised_message_parts) if canonicalised_message_parts_separator is not None else None,
+            canonicalised_message=canonicalised_message_parts_separator.join(canonicalised_message_parts) if (canonicalised_message_parts_separator is not None and canonicalised_message_parts is not None) else None,
             byteoffset=self.f.tell(),
         )
 
@@ -420,7 +422,7 @@ class MboxStreamReader:
 #/ class MboxStreamReader:
 
 
-def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, compare_corrupt_message_dates: bool, hash_only_comparison: bool) -> int:
+def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, compare_corrupt_message_dates: bool, hash_only_comparison: bool, order_tolerant_comparison: bool) -> int:
 
     ra = MboxStreamReader(path_a, mode, compare_corrupt_message_dates)
     rb = MboxStreamReader(path_b, mode, compare_corrupt_message_dates)
@@ -440,14 +442,20 @@ def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, com
         prev_mb_mbox_from_separator = b""
         error = False
 
+        mboxa_dict = {}
+        mboxb_dict = {}
+
         # NB! Need to begin all print statements with a space or empty line to mitigate the progressbar having cursor located at one space before the end of the previous line.
         with ProgressBar(max_value=totalsize, granularity=1000 * 1000) as bar:
             while True:                
                 try:
+                    compared += 1
+
                     ma = ra.next_message(canonicalised_message_parts_separator=None if hash_only_comparison else b"")
                     mb = rb.next_message(canonicalised_message_parts_separator=None if hash_only_comparison else b"")
 
                     if ma is None and mb is None:
+                        compared -= 1
                         break
 
                     if ma:
@@ -457,53 +465,84 @@ def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, com
                     byteoffset = ma_byteoffset + mb_byteoffset
                     bar.update(byteoffset // (1000 * 1000) * (1000 * 1000))
 
-                    prev_ma_message_id = ma.message_id
-                    prev_mb_message_id = mb.message_id
-                    prev_ma_mbox_from_separator = ma.mbox_from_separator
-                    prev_mb_mbox_from_separator = mb.mbox_from_separator
+                    if ma is not None:
+                        prev_ma_message_id = ma.message_id
+                        prev_ma_mbox_from_separator = ma.mbox_from_separator
+                    if mb is not None:
+                        prev_mb_message_id = mb.message_id
+                        prev_mb_mbox_from_separator = mb.mbox_from_separator
 
                     if ma is None or mb is None:
                         # Different number of messages
-                        mismatches += 1
-                        if ma is None:
-                            print()
-                            print(f"Mismatch: {path_a} ended early; {path_b} has extra messages (next index {mb.index}).")
-                        else:
-                            print()
-                            print(f"Mismatch: {path_b} ended early; {path_a} has extra messages (next index {ma.index}).")
-                        if mismatches >= max_mismatches:
-                            break
-                        continue
 
-                    compared += 1
+                        if order_tolerant_comparison:
+                            if hash_only_comparison:                                
+                                if ma is not None:
+                                    ma.canonicalised_message = None   # Free the memory
+                                    mboxa_dict[ma.sha256_hex] = ma
+                                if mb is not None:
+                                    mb.canonicalised_message = None   # Free the memory
+                                    mboxb_dict[mb.sha256_hex] = mb
+                            else:
+                                if ma is not None:
+                                    mboxa_dict[ma.canonicalised_message] = ma
+                                if mb is not None:
+                                    mboxb_dict[mb.canonicalised_message] = mb
+                        else:
+                            mismatches += 1
+                            if mb is not None:
+                                print()
+                                print(f"Mismatch: {path_a} ended early; {path_b} has extra messages (next index {mb.index}).")
+                            elif ma is not None:
+                                print()
+                                print(f"Mismatch: {path_b} ended early; {path_a} has extra messages (next index {ma.index}).")
+
+                            if mismatches >= max_mismatches:
+                                break
+                        #/ if order_tolerant_comparison:
+
+                        continue
+                    #/ if ma is None or mb is None:
 
                     if ma.sha256_hex != mb.sha256_hex or (not hash_only_comparison and ma.canonicalised_message != mb.canonicalised_message):
-                        mismatches += 1
 
-                        if ma.message_id:
-                            msgid_a = ma.message_id 
-                        else:
-                            msgid_a = b"from line: " + ma.mbox_from_separator
+                        if order_tolerant_comparison:
+                            if hash_only_comparison:
+                                ma.canonicalised_message = None   # Free the memory 
+                                mb.canonicalised_message = None   # Free the memory
+                                mboxa_dict[ma.sha256_hex] = ma
+                                mboxb_dict[mb.sha256_hex] = mb
+                            else:
+                                mboxa_dict[ma.canonicalised_message] = ma
+                                mboxb_dict[mb.canonicalised_message] = mb
+                        else:   # If the messages are already equal then there is no point in saving them to the dict. That would just consume unnecessary memory.
+                            mismatches += 1
 
-                        if mb.message_id:
-                            msgid_b = mb.message_id
-                        else:
-                            msgid_b = b"from line: " + mb.mbox_from_separator
+                            if ma.message_id:
+                                msgid_a = ma.message_id 
+                            else:
+                                msgid_a = b"from line: " + ma.mbox_from_separator
 
-                        print()
-                        print(
-                            f"Mismatch at message #{ma.index}:\n"
-                            f"  A: sha256={ma.sha256_hex}  canonical_bytes={ma.size_canonical_bytes}  Message-ID={msgid_a}\n"
-                            f"  B: sha256={mb.sha256_hex}  canonical_bytes={mb.size_canonical_bytes}  Message-ID={msgid_b}\n"
-                        )
-                        if mismatches >= max_mismatches:
-                            break
+                            if mb.message_id:
+                                msgid_b = mb.message_id
+                            else:
+                                msgid_b = b"from line: " + mb.mbox_from_separator
+
+                            print()
+                            print(
+                                f"Mismatch at message #{compared}:\n"
+                                f"  A: sha256={ma.sha256_hex}  canonical_bytes={ma.size_canonical_bytes}  Message-ID={msgid_a}\n"
+                                f"  B: sha256={mb.sha256_hex}  canonical_bytes={mb.size_canonical_bytes}  Message-ID={msgid_b}\n"
+                            )
+                            if mismatches >= max_mismatches:
+                                break
+                        #/ if order_tolerant_comparison:
 
                         if compared % 1000 == 0:
-                            print(f"Messages compared: {compared}")   # NB! Note that here we do not add space before the words
+                            print(f"Message pairs parsed: {compared}")   # NB! Note that here we do not add space before the words
 
                     elif compared % 1000 == 0:
-                        print(f" Messages compared: {compared}")  # NB! Note the space before the words
+                        print(f" Message pairs parsed: {compared}")  # NB! Note the space before the words
 
                 except Exception as ex:
                     msg = str(ex) + os.linesep + traceback.format_exc()
@@ -522,10 +561,10 @@ def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, com
                         msgid_b = b"from line: " + prev_mb_mbox_from_separator
 
                     print(
-                        f"Exception at message #{ma.index}\n"
+                        f"Exception at message #{compared}\n"
                         f"Last successfully processed messages were:\n"
-                        f"  A: sha256={ma.sha256_hex}  canonical_bytes={ma.size_canonical_bytes}  Message-ID={msgid_a}\n"
-                        f"  B: sha256={mb.sha256_hex}  canonical_bytes={mb.size_canonical_bytes}  Message-ID={msgid_b}\n"
+                        f"  A: sha256={(ma.sha256_hex if ma is not None else None)}  canonical_bytes={(ma.size_canonical_bytes if ma is not None else None)}  Message-ID={msgid_a}\n"
+                        f"  B: sha256={(mb.sha256_hex if mb is not None else None)}  canonical_bytes={(mb.size_canonical_bytes if mb is not None else None)}  Message-ID={msgid_b}\n"
                     )
 
                     print()
@@ -536,6 +575,57 @@ def compare_mboxes(path_a: str, path_b: str, mode: str, max_mismatches: int, com
 
             if mismatches < max_mismatches:
                 bar.update(totalsize)   # Remove the byteoffset rounding so that progress jumps to full 100%
+
+            if order_tolerant_comparison:
+
+                mboxa_keys = set(mboxa_dict.keys())
+                mboxb_keys = set(mboxb_dict.keys())
+
+                present_only_in_mboxa = mboxa_keys - mboxb_keys
+                present_only_in_mboxb = mboxb_keys - mboxa_keys
+
+                for mboxa_key in present_only_in_mboxa:                    
+                    mismatches += 1
+
+                    ma = mboxa_dict[mboxa_key]
+
+                    if ma.message_id:
+                        msgid_a = ma.message_id 
+                    else:
+                        msgid_a = b"from line: " + ma.mbox_from_separator
+
+                    print()
+                    print(
+                        f"Randomly chosen unique message in first mbox #{ma.index}:\n"
+                        f"  A: sha256={ma.sha256_hex}  canonical_bytes={ma.size_canonical_bytes}  Message-ID={msgid_a}\n"
+                    )
+                    if mismatches >= max_mismatches:
+                        break
+                #/ for mboxa_key in present_only_in_mboxa:
+
+                for mboxb_key in present_only_in_mboxb:                    
+                    mismatches += 1
+
+                    mb = mboxb_dict[mboxb_key]
+
+                    if mb.message_id:
+                        msgid_b = mb.message_id
+                    else:
+                        msgid_b = b"from line: " + mb.mbox_from_separator
+
+                    print()
+                    print(
+                        f"Randomly chosen unique message in second mbox #{mb.index}:\n"
+                        f"  B: sha256={mb.sha256_hex}  canonical_bytes={mb.size_canonical_bytes}  Message-ID={msgid_b}\n"
+                    )
+                    if mismatches >= max_mismatches:
+                        break
+                #/ for mboxa_key in present_only_in_mboxb:
+                
+                # Here we can calcualte the total number of mismatches even when the printout was terminated early.
+                mismatches = len(present_only_in_mboxa) + len(present_only_in_mboxb)
+
+            #/ if order_tolerant_comparison:
 
         #/ with ProgressBar(max_value=totalsize, granularity=1000 * 1000) as bar:
 
@@ -585,9 +675,16 @@ def main() -> None:
         help="Compares messages only via hashes to provide minor speed boost (default: off). Default is off (i.e comparison of canonicalised messages byte by byte is on) because that avoids the theoretical risk of hash collisions at a minor speed cost (about 5%).",
     )
 
+    ap.add_argument(
+        "--order-tolerant-comparison",
+        action="store_true",
+        default=False,
+        help="Ignores message order differences between the mboxes (default: off). Strongly recommended to enable only together with --hash-only-comparison, else this order tolerant comparison mode would most likely consume huge amount of memory.",
+    )
+
     args = ap.parse_args()
 
-    compare_mboxes(args.mbox_a, args.mbox_b, args.mode, args.max_mismatches, args.compare_corrupt_message_dates, args.hash_only_comparison)
+    compare_mboxes(args.mbox_a, args.mbox_b, args.mode, args.max_mismatches, args.compare_corrupt_message_dates, args.hash_only_comparison, args.order_tolerant_comparison)
 
     quit()
 
